@@ -19,7 +19,7 @@ This mod replaces the slow search with a pre-built cached index that executes in
 
 ## How It Works
 
-- On first song request, the mod builds a word-based index of all songs so it will stutter on first search.(Important note: This is a one-time cost that happens only on the first search after launching the game or changing scenes.) 
+- On first song request, the mod builds a word-based index of all songs so it will stutter on first search.(Important note: This is a one-time cost that happens only on the first search after launching the game) 
 - Subsequent searches use the cached index for instant lookups
 - The cache automatically rebuilds when changing scenes
 - Falls back to the original search if any errors occur (Failsafe)
