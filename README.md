@@ -4,7 +4,7 @@ A MelonLoader mod for Synth Riders that eliminates stutter during Twitch song re
 
 ## The Problem
 
-When viewers use the `!sr` command to request songs, the game's built-in search function runs synchronously on the main thread, causing noticeable frame drops and stuttering during gameplay.
+When viewers use the `!srr` command to request songs, the game's built-in search function runs synchronously on the main thread, causing noticeable frame drops and stuttering during gameplay.
 
 ## The Solution
 
