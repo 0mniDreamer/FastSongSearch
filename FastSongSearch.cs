@@ -6,44 +6,80 @@ using System.Linq;
 using Il2CppSynth.Twitch;
 using Il2CppMiKu.NET.Charting;
 
-[assembly: MelonInfo(typeof(FastSongSearch.FastSongSearchMod), "Fast Song Search", "1.0.0", "OmniDreamer", "https://github.com/0mniDreamer/FastSongSearch")]
+[assembly: MelonInfo(typeof(FastSongSearch.FastSongSearchMod), "Fast Song Search", "1.0.1", "OmniDreamer")]
 [assembly: MelonGame("Kluge Interactive", "SynthRiders")]
 
 namespace FastSongSearch
 {
     /// <summary>
-    /// Fast Song Search - Eliminates stutter during Twitch song requests
-    /// by replacing the slow synchronous search with a pre-built cached index.
+    /// MelonLoader mod that fixes Twitch song request issues in Synth Riders:
+    /// 1. Eliminates stutter when viewers use !srr (cached search index)
+    /// 2. Fixes songs not being removed from queue after playing
     /// </summary>
     public class FastSongSearchMod : MelonMod
     {
-        public static FastSongSearchMod Instance { get; private set; }
+        private static string _lastScene = "";
+        private static int _queueCountBeforeGame = 0;
+        private static string _firstQueuedSongName = "";
 
         public override void OnInitializeMelon()
         {
-            Instance = this;
-            LoggerInstance.Msg("Fast Song Search loaded!");
+            LoggerInstance.Msg("Fast Song Search loaded - Twitch requests optimized!");
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
+            // Snapshot queue when entering gameplay
+            if (IsGameScene(sceneName) && !IsGameScene(_lastScene))
+            {
+                try
+                {
+                    var queue = TwitchBot.GetSongsInQueue();
+                    _queueCountBeforeGame = queue?.Count ?? 0;
+                    _firstQueuedSongName = (_queueCountBeforeGame > 0) ? queue[0]?.Name ?? "" : "";
+                }
+                catch { }
+            }
+
+            // Remove played song when returning to menu
+            if (sceneName == "SongSelection" && WasInGame(_lastScene))
+            {
+                if (_queueCountBeforeGame > 0 && !string.IsNullOrEmpty(_firstQueuedSongName))
+                {
+                    QueueManager.RemoveFirstSongFromQueue(_queueCountBeforeGame);
+                }
+                _queueCountBeforeGame = 0;
+                _firstQueuedSongName = "";
+            }
+
+            _lastScene = sceneName;
             SongSearchCache.Invalidate();
+        }
+
+        private static bool IsGameScene(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName)) return false;
+            var lower = sceneName.ToLowerInvariant();
+            return lower.Contains("stage") && !lower.Contains("gameend") && !lower.Contains("gamestart");
+        }
+
+        private static bool WasInGame(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName)) return false;
+            return sceneName.ToLowerInvariant().Contains("gameend");
         }
     }
 
     /// <summary>
-    /// Cached song search index for fast lookups.
+    /// Pre-indexed song search for instant lookups.
     /// </summary>
-    public static class SongSearchCache
+    internal static class SongSearchCache
     {
         private static Dictionary<string, List<Chart>> _wordIndex = new();
         private static List<Chart> _allSongs = new();
         private static bool _isBuilt = false;
         private static readonly object _lock = new();
 
-        /// <summary>
-        /// Invalidate the cache when song list changes.
-        /// </summary>
         public static void Invalidate()
         {
             lock (_lock)
@@ -54,9 +90,6 @@ namespace FastSongSearch
             }
         }
 
-        /// <summary>
-        /// Build the search index from the song list.
-        /// </summary>
         private static void Build(Il2CppSystem.Collections.Generic.List<Chart> songs)
         {
             if (_isBuilt) return;
@@ -78,21 +111,12 @@ namespace FastSongSearch
                 }
 
                 _isBuilt = true;
-                MelonLogger.Msg($"[FastSongSearch] Indexed {_allSongs.Count} songs");
             }
         }
 
-        /// <summary>
-        /// Index a single chart by its searchable fields.
-        /// </summary>
         private static void IndexChart(Chart chart)
         {
-            var fields = new[] 
-            { 
-                chart.Name, 
-                chart.Author, 
-                chart.Beatmapper 
-            };
+            var fields = new[] { chart.Name, chart.Author, chart.Beatmapper };
 
             foreach (var field in fields)
             {
@@ -117,9 +141,6 @@ namespace FastSongSearch
             }
         }
 
-        /// <summary>
-        /// Search for a song by query string.
-        /// </summary>
         public static Chart Search(string query, Il2CppSystem.Collections.Generic.List<Chart> songs)
         {
             if (string.IsNullOrWhiteSpace(query))
@@ -136,17 +157,15 @@ namespace FastSongSearch
 
             var scores = new Dictionary<Chart, int>();
 
-            // Score by indexed word matches
+            // Score by word matches
             foreach (var word in queryWords)
             {
-                // Exact word match
                 if (_wordIndex.TryGetValue(word, out var exactMatches))
                 {
                     foreach (var chart in exactMatches)
                         AddScore(scores, chart, 10);
                 }
 
-                // Partial word matches
                 foreach (var kvp in _wordIndex)
                 {
                     if (kvp.Key.Contains(word) || word.Contains(kvp.Key))
@@ -157,7 +176,7 @@ namespace FastSongSearch
                 }
             }
 
-            // Fallback: scan all songs if no indexed matches
+            // Fallback to substring search
             if (scores.Count == 0)
             {
                 foreach (var chart in _allSongs)
@@ -171,14 +190,14 @@ namespace FastSongSearch
             if (scores.Count == 0)
                 return null;
 
-            // Bonus for exact or prefix matches
+            // Boost exact and prefix matches
             foreach (var chart in scores.Keys.ToList())
             {
                 var name = chart.Name?.ToLowerInvariant() ?? "";
-                
+
                 if (name == query)
-                    return chart; // Perfect match - return immediately
-                
+                    return chart;
+
                 if (name.StartsWith(query))
                     scores[chart] += 20;
             }
@@ -195,10 +214,40 @@ namespace FastSongSearch
     }
 
     /// <summary>
-    /// Harmony patches to replace the slow search with the fast version.
+    /// Handles removing songs from the Twitch request queue.
+    /// Works around a game bug where the last song doesn't get removed.
     /// </summary>
+    internal static class QueueManager
+    {
+        public static void RemoveFirstSongFromQueue(int queueCountBeforeGame)
+        {
+            try
+            {
+                var queue = TwitchBot.GetSongsInQueue();
+                if (queue == null || queue.Count == 0) return;
+
+                // Use the count from BEFORE we started playing
+                // If there was only 1 song, use QueueClear (workaround for game bug)
+                // If there were multiple songs, use QueueRemove
+                if (queueCountBeforeGame == 1)
+                {
+                    TwitchBot.QueueClear();
+                }
+                else
+                {
+                    var songToRemove = queue[0];
+                    if (songToRemove != null)
+                    {
+                        TwitchBot.QueueRemove(songToRemove);
+                    }
+                }
+            }
+            catch { }
+        }
+    }
+
     [HarmonyPatch]
-    public static class SearchPatch
+    internal static class Patches
     {
         [HarmonyPatch(typeof(TwitchBot), nameof(TwitchBot.SearchSongsByName))]
         [HarmonyPrefix]
@@ -212,9 +261,8 @@ namespace FastSongSearch
                 __result = SongSearchCache.Search(query, availableSongs);
                 return false;
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Error($"[FastSongSearch] Error: {ex.Message}");
                 return true; // Fall back to original on error
             }
         }

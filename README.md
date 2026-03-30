@@ -2,7 +2,8 @@
 
 A MelonLoader mod for Synth Riders that eliminates stutter during Twitch song requests.
 
-## The Problem
+### 1. Stutter Fix
+When viewers use the `!srr` command to request songs, the game's built-in search runs synchronously on the main thread, causing noticeable stutters - especially with large song libraries. This mod replaces the slow search with a pre-built word index that executes instantly.
 
 When viewers use the `!srr` command to request songs, the game's built-in search function runs synchronously on the main thread, causing noticeable frame drops and stuttering during gameplay.
 
@@ -19,17 +20,22 @@ This mod replaces the slow search with a pre-built cached index that executes in
 
 ## How It Works
 
+**Fast Search:**
 - On first song request, the mod builds a word-based index of all songs so it will stutter on first search.(Important note: This is a one-time cost that happens only on the first search after launching the game) 
 - Subsequent searches use the cached index for instant lookups
 - The cache automatically rebuilds when changing scenes
 - Falls back to the original search if any errors occur (Failsafe)
 
+**Queue Fix:**
+- Tracks the queue state when entering gameplay
+- When returning to song selection after playing, removes the played song
+- Uses `QueueClear()` for the last song to work around a game bug where `QueueRemove()` fails
+
 ## Compatibility
 
-- Synth Riders (Steam/PC VR)
-- MelonLoader 0.7.2
-- .NET 6.0
-
+- Synth Riders 3.6.x (Steam/PC VR)
+- MelonLoader 0.7.x
+- .NET 6.0 / IL2CPP
 ## License
 
 MIT License - see [LICENSE](LICENSE)
