@@ -42,5 +42,5 @@ This mod replaces the slow search with a pre-built cached index that executes in
 MIT License - see [LICENSE](LICENSE)
 
 ## Credits
-Synth Riders by Kluge Interactive
-MelonLoader by LavaGang
+- Synth Riders by Kluge Interactive
+- MelonLoader by LavaGang
